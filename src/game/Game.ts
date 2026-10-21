@@ -13,7 +13,10 @@ import { PlayerController, type PlayerPose } from '../player/PlayerController'
 import { createRenderer } from '../render/createRenderer'
 import type { LoadedMap } from '../world/loadMap'
 import type { MapMarker, MapSolid } from '../world/types'
+import { disposeGlock } from '../weapon/Glock'
 import { FrameClock } from './FrameClock'
+
+const GLOCK_RESPAWN_SEC = 5
 
 export class Game {
   private readonly renderer: THREE.WebGLRenderer
@@ -29,6 +32,13 @@ export class Game {
   private readonly exhibit: Character | null
   private readonly exhibitPose: CharacterPose | null
   private readonly characterTemplate: CharacterTemplate
+  private readonly glockTemplate: THREE.Group
+  private worldGlock: THREE.Object3D | null = null
+  private glow: THREE.Mesh | null = null
+  private holding = false
+  private respawnIn: number | null = null
+  private readonly glockAt = new THREE.Vector3()
+  private crate: { x: number; z: number; top: number } | null = null
   private readonly resizeObserver: ResizeObserver
   private shownFps: number | null = null
   private running = false
@@ -51,11 +61,13 @@ export class Game {
     this.player.syncView(dt)
     const pose = this.player.pose()
     const speed = this.player.horizontalSpeed()
+    this.tryPickup(pose)
+    this.tickGlock(dt, nowMs)
     this.body.update(dt, pose, speed, this.camera)
     if (this.exhibit && this.exhibitPose) {
       this.exhibit.update(dt, {
         x: this.exhibitPose.x,
-        y: this.exhibitPose.y + pose.y,
+        y: this.exhibitPose.y,
         z: this.exhibitPose.z,
         yaw: this.exhibitPose.yaw,
         crouched: pose.crouched,
@@ -75,8 +87,10 @@ export class Game {
     private readonly world: LoadedMap,
     private readonly physics: MapPhysics,
     characterTemplate: CharacterTemplate,
+    glockTemplate: THREE.Group,
   ) {
     this.characterTemplate = characterTemplate
+    this.glockTemplate = glockTemplate
     this.renderer = createRenderer(host)
     this.scene = world.scene
     this.disposeWorld = world.dispose
@@ -112,6 +126,7 @@ export class Game {
       this.exhibit = null
       this.exhibitPose = null
     }
+    this.placeGlock(world)
     this.resizeObserver = new ResizeObserver(() => this.resize())
     this.resizeObserver.observe(host)
     this.resize()
@@ -146,12 +161,108 @@ export class Game {
     this.body.dispose()
     this.exhibit?.dispose()
     this.characterTemplate.dispose()
+    if (this.glow) {
+      this.glow.geometry.dispose()
+      const material = this.glow.material
+      if (!Array.isArray(material)) material.dispose()
+      this.glow = null
+    }
+    disposeGlock(this.glockTemplate)
     this.physics.dispose()
     this.disposeWorld()
     this.renderer.dispose()
     this.renderer.domElement.remove()
     this.fpsReadout.textContent = '— FPS'
     this.shownFps = null
+  }
+
+  /** The cache crate in the middle of the yard. The pistol rests on its top. */
+  private placeGlock(world: LoadedMap): void {
+    const crate = world.solids.find(
+      (solid) => solid.material === 'wood' && solid.at[0] === 0 && solid.at[2] === -4,
+    )
+    if (!crate) return
+    this.crate = {
+      x: crate.at[0],
+      z: crate.at[2],
+      top: crate.at[1] + crate.size[1] / 2,
+    }
+    this.spawnWorldGlock()
+  }
+
+  private spawnWorldGlock(): void {
+    if (this.worldGlock || !this.crate) return
+    const gun = this.glockTemplate.clone(true)
+    // Upright, broadside toward the south spawn. Model +X is the grip bottom
+    // and model −Z is the muzzle, so this shows the side instead of the 2 cm edge.
+    gun.quaternion.setFromRotationMatrix(
+      new THREE.Matrix4().makeBasis(
+        new THREE.Vector3(0, -1, 0),
+        new THREE.Vector3(0, 0, 1),
+        new THREE.Vector3(-1, 0, 0),
+      ),
+    )
+    gun.updateMatrixWorld(true)
+    const box = new THREE.Box3().setFromObject(gun)
+    gun.position.y -= box.min.y
+    gun.position.x -= (box.min.x + box.max.x) / 2
+    gun.position.z -= (box.min.z + box.max.z) / 2
+
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.45, 0.78, 48),
+      new THREE.MeshBasicMaterial({
+        color: 0xc8ffe8,
+        transparent: true,
+        opacity: 0.95,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    )
+    ring.rotation.x = -Math.PI / 2
+    ring.position.y = 0.03
+    ring.renderOrder = 2
+    this.glow = ring
+
+    const pickup = new THREE.Group()
+    pickup.add(gun)
+    pickup.add(ring)
+    pickup.position.set(this.crate.x, this.crate.top + 0.01, this.crate.z)
+    this.glockAt.set(this.crate.x, this.crate.top, this.crate.z)
+    this.worldGlock = pickup
+    this.scene.add(pickup)
+  }
+
+  private tryPickup(pose: PlayerPose): void {
+    if (this.holding || !this.worldGlock) return
+    const reach = Math.hypot(pose.x - this.glockAt.x, pose.z - this.glockAt.z)
+    if (reach > 1.2) return
+    if (!this.body.attachRightHand(this.glockTemplate.clone(true))) return
+    this.exhibit?.attachRightHand(this.glockTemplate.clone(true))
+    this.scene.remove(this.worldGlock)
+    this.worldGlock = null
+    if (this.glow) {
+      this.glow.geometry.dispose()
+      const material = this.glow.material
+      if (!Array.isArray(material)) material.dispose()
+      this.glow = null
+    }
+    this.holding = true
+    this.respawnIn = GLOCK_RESPAWN_SEC
+  }
+
+  private tickGlock(dt: number, nowMs: number): void {
+    if (this.glow) {
+      const material = this.glow.material
+      if (!Array.isArray(material)) {
+        material.opacity = 0.4 + 0.45 * (0.5 + 0.5 * Math.sin(nowMs / 280))
+      }
+    }
+    if (this.respawnIn === null) return
+    this.respawnIn -= dt
+    if (this.respawnIn > 0) return
+    this.respawnIn = null
+    this.spawnWorldGlock()
   }
 
   private resize(): void {

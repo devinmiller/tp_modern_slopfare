@@ -54,6 +54,8 @@ In the dev server, the console exposes `window.__game`. `__game.capturePose()` r
 | `src/player/PlayerController.ts` | Look, stance, and the kinematic move intent |
 | `src/character/Character.ts` | Loads the human glTF and plays its locomotion clips |
 | `public/models/human/` | Quaternius mannequin plus the animation library |
+| `src/weapon/Glock.ts` | Loads the pistol and fits it to a 20 cm length |
+| `public/models/weapons/glock.glb` | CC0 low-poly Glock (CreativeTrio, Poly Pizza) |
 | `src/physics/MapPhysics.ts` | Rapier world, map cuboids, character controller |
 | `src/render/createRenderer.ts` | WebGLRenderer, sRGB, ACES tone mapping, PCF shadows, pixel-ratio cap |
 | `src/maps/compound.ts` | First map: solids and markers |
@@ -72,7 +74,7 @@ In the dev server, the console exposes `window.__game`. `__game.capturePose()` r
 - Clicking the canvas requests pointer lock. While locked, mouse movement changes yaw and pitch. Esc (browser default) leaves pointer lock. The hint hides while locked.
 - WASD moves the feet relative to the horizontal look direction. Diagonal movement is normalized. Shift raises the target speed, C toggles crouch, and Space jumps. Keys still move the player when the pointer is not locked, so the page can be exercised without a captured mouse. Look deltas are ignored unless the pointer is locked, because `movementX` / `movementY` are only meaningful then.
 - The player collides with `LoadedMap.solids`. Walking into a wall or a crate stops at it. Gravity holds the feet on the ground, and leaving the ground slab drops the player. C toggles crouch. Standing back up waits until the standing capsule fits.
-- The local body follows the feet and yaw. Fragments within 0.55 m of the camera are discarded so the view is not inside the head. Idle, walk, sprint, crouch, and jump are clips from the model. Walking travels at 4.5 m/s and running at 6.6 m/s. The walk and sprint clips play through at the file rate instead of restarting every frame. The copy on `spawn-counterforce` keeps that spot and that yaw, and plays the same clips. Its feet rise with the player's jump.
+- The local body follows the feet and yaw. Fragments within 0.55 m of the camera are discarded so the view is not inside the head. Idle, walk, sprint, crouch, and jump are clips from the model. Walking travels at 4.5 m/s and running at 6.6 m/s. The walk and sprint clips play through at the file rate instead of restarting every frame. The copy on `spawn-counterforce` keeps that spot, that yaw, and ground level, and plays the same clips. A Glock rests on the center cache crate inside a glowing ring. Walking up to it puts the pistol in the right hand, muzzle along the view. The crate copy comes back after 5 seconds.
 - Releasing the pointer, or blurring the window, drops stale look deltas or stuck keys.
 - Right-click on the canvas does not open the browser menu. The right button is unused.
 - HMR and `Game.dispose` release the animation loop, listeners, geometries, materials, the Rapier world, and the WebGL context.
@@ -128,7 +130,11 @@ There is still no server. Do not add a transport until a local round is worth re
 
 The body is the mannequin shipped with Quaternius's Universal Animation Library (CC0), `public/models/human/AnimationLibrary_Godot_Standard.gltf`. One skinned mesh carries idle, walk, sprint, crouch idle, crouch move, jump start, jump loop, and jump land. Travel speed stays 4.5 m/s walking and 6.6 m/s running. Clips play at the file rate: walk about 1.3 s, sprint about 0.67 s. Gait comes from the controller's horizontal velocity. Measuring speed from one rendered frame made it flap between stopped and sprint, and the clip restarted every frame, which looked like a blur no playback rate could change. The earlier raccoon file only had a generated walk and run, and crouch and jump were bone offsets. That file and the Draco decoder are gone.
 
-The glTF faces +Z. The instance turns it by π so yaw 0 still looks down −Z. The model is scaled to about 1.72 m. The first-person clone discards fragments within 0.55 m of the lens. The exhibit on `spawn-counterforce` keeps the marker's xz and yaw. Its clip follows the player's speed, crouch, and airborne state, and its feet use the player's feet height during a jump. Neither mesh has a collider.
+The glTF faces +Z. The instance turns it by π so yaw 0 still looks down −Z. The model is scaled to about 1.72 m. The first-person clone discards fragments within 0.55 m of the lens. The exhibit on `spawn-counterforce` keeps the marker's position and yaw, including ground level, whether or not the player has jumped onto something. Its clip follows the player's speed, crouch, and airborne state. Neither mesh has a collider.
+
+### 2026-10-21 — Pistol pickup
+
+A CC0 low-poly Glock, `public/models/weapons/glock.glb` (CreativeTrio, via Poly Pizza), stands on the cache crate in the center of Compound, broadside toward the south spawn, inside a pulsing ring. The file is scaled to a 20 cm length. On this mesh the muzzle is local −Z and the grip hangs toward +X. Walking within 1.2 m of it, measured on the ground, picks it up. Another copy appears on the crate after 5 seconds, and walking over that one does nothing while a pistol is already held. The held pistol is parented to the character. Each frame the right arm points along the camera look (horizontal forward on the exhibit), the right fingers curl down around the grip, and the grip is moved onto that hand with the muzzle along the aim. Three.js drops dots from glTF node names, so the bone is `DEF-handR`. This is a visible prop. It does not fire. Hitscan is still later.
 
 ### 2026-10-21 — Daytime sky and one fitted shadow
 

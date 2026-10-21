@@ -34,7 +34,13 @@ const CLIPS = {
 
 type ClipName = keyof typeof CLIPS
 
+const UNIT_Y = new THREE.Vector3(0, 1, 0)
 const LOCOMOTION = new Set<ClipName>(['idle', 'walk', 'sprint', 'crouchIdle', 'crouchMove'])
+/**
+ * Middle of the grip on the fitted pistol. Model +X is the bottom of the grip
+ * and model −Z is the muzzle.
+ */
+const GRIP_LOCAL = new THREE.Vector3(0.048, 0.011, 0.056)
 
 /**
  * Quaternius Universal Animation Library mannequin. One skinned mesh and the
@@ -76,6 +82,22 @@ export class Character {
   private landFinished = false
   private pending: ClipName | null = null
   private pendingFor = 0
+  private heldGun: THREE.Object3D | null = null
+  private readonly restForearm = new THREE.Quaternion()
+  private readonly restHand = new THREE.Quaternion()
+  private readonly fingerRest = new Map<string, THREE.Quaternion>()
+  private readonly fingerCurl = new THREE.Quaternion()
+  private readonly curlAxis = new THREE.Vector3(1, 0, 0)
+  private readonly handWorld = new THREE.Vector3()
+  private readonly aimForward = new THREE.Vector3()
+  private readonly aimLocal = new THREE.Vector3()
+  private readonly gripDown = new THREE.Vector3()
+  private readonly barrelBack = new THREE.Vector3()
+  private readonly gunRight = new THREE.Vector3()
+  private readonly gripPoint = new THREE.Vector3()
+  private readonly parentQuat = new THREE.Quaternion()
+  private readonly armAim = new THREE.Quaternion()
+  private readonly gunBasis = new THREE.Matrix4()
 
   constructor(template: CharacterTemplate, clipCamera: boolean) {
     const model = cloneSkeleton(template.scene)
@@ -106,6 +128,15 @@ export class Character {
 
     this.clipPlane = clipCamera ? new THREE.Plane(new THREE.Vector3(0, 0, -1), 0) : null
     applyShadowsAndClip(model, this.clipPlane)
+    const forearm = model.getObjectByName('DEF-forearmR')
+    const hand = model.getObjectByName('DEF-handR')
+    if (forearm) this.restForearm.copy(forearm.quaternion)
+    if (hand) this.restHand.copy(hand.quaternion)
+    model.traverse((object) => {
+      const rightFinger = object.name.startsWith('DEF-f_') || object.name.startsWith('DEF-thumb')
+      if (!rightFinger || !object.name.endsWith('R')) return
+      this.fingerRest.set(object.name, object.quaternion.clone())
+    })
   }
 
   /**
@@ -117,14 +148,89 @@ export class Character {
     const next = this.choose(pose, speed)
     this.holdOrSwitch(next, dt)
     this.mixer.update(dt)
-
     this.object.position.set(pose.x, pose.y, pose.z)
     this.object.rotation.y = pose.yaw
+    if (this.heldGun) {
+      if (camera) camera.getWorldDirection(this.aimForward)
+      else this.aimForward.set(-Math.sin(pose.yaw), 0, -Math.cos(pose.yaw))
+      this.aimRightArm(this.aimForward)
+      this.placeHeldGun(this.aimForward)
+    }
     if (this.clipPlane && camera) {
       camera.getWorldDirection(this.viewForward)
       this.viewPoint.copy(camera.position).addScaledVector(this.viewForward, 0.55)
       this.clipPlane.setFromNormalAndCoplanarPoint(this.viewForward, this.viewPoint)
     }
+  }
+
+  /**
+   * Keep `gun` on this character. Each frame seats the grip in the right hand
+   * and points the muzzle along the aim direction.
+   */
+  attachRightHand(gun: THREE.Object3D): boolean {
+    // GLTFLoader strips dots, so DEF-hand.R is DEF-handR.
+    if (!this.object.getObjectByName('DEF-handR')) return false
+    this.heldGun = gun
+    this.object.add(gun)
+    return true
+  }
+
+  /** Point the right arm along `forwardWorld`, with the forearm and hand in their rest pose. */
+  private aimRightArm(forwardWorld: THREE.Vector3): void {
+    const upper = this.object.getObjectByName('DEF-upper_armR')
+    const forearm = this.object.getObjectByName('DEF-forearmR')
+    const hand = this.object.getObjectByName('DEF-handR')
+    if (!upper?.parent) return
+    upper.parent.updateWorldMatrix(true, false)
+    upper.parent.getWorldQuaternion(this.parentQuat)
+    this.aimLocal.copy(forwardWorld).applyQuaternion(this.parentQuat.invert())
+    if (this.aimLocal.lengthSq() < 1e-8) return
+    this.aimLocal.normalize()
+    this.armAim.setFromUnitVectors(UNIT_Y, this.aimLocal)
+    upper.quaternion.copy(this.armAim)
+    if (forearm) forearm.quaternion.copy(this.restForearm)
+    if (hand) hand.quaternion.copy(this.restHand)
+    this.curlFingers()
+  }
+
+  /** Bend the right fingers down around a vertical grip. */
+  private curlFingers(): void {
+    for (const [name, rest] of this.fingerRest) {
+      const bone = this.object.getObjectByName(name)
+      if (!bone) continue
+      const knuckle = name.endsWith('01R') ? -0.7 : name.endsWith('02R') ? -0.95 : -0.55
+      this.fingerCurl.setFromAxisAngle(this.curlAxis, knuckle)
+      bone.quaternion.copy(rest).multiply(this.fingerCurl)
+    }
+  }
+
+  private placeHeldGun(forwardWorld: THREE.Vector3): void {
+    const gun = this.heldGun
+    const hand = this.object.getObjectByName('DEF-handR')
+    if (!gun || !hand) return
+    this.object.updateWorldMatrix(true, true)
+    hand.getWorldPosition(this.handWorld)
+    this.object.worldToLocal(this.handWorld)
+    this.object.getWorldQuaternion(this.parentQuat)
+    this.aimLocal.copy(forwardWorld).applyQuaternion(this.parentQuat.invert())
+    if (this.aimLocal.lengthSq() < 1e-8) return
+    this.aimLocal.normalize()
+
+    // +X on the pistol is the bottom of the grip. Tip it toward world down, which
+    // is local down because the character only yaws.
+    this.gripDown.set(0, -1, 0)
+    this.gripDown.addScaledVector(this.aimLocal, -this.gripDown.dot(this.aimLocal))
+    if (this.gripDown.lengthSq() < 1e-6) this.gripDown.set(1, 0, 0)
+    this.gripDown.normalize()
+    this.barrelBack.copy(this.aimLocal).negate()
+    this.gunRight.crossVectors(this.barrelBack, this.gripDown).normalize()
+    this.gunBasis.makeBasis(this.gripDown, this.gunRight, this.barrelBack)
+    gun.quaternion.setFromRotationMatrix(this.gunBasis)
+
+    this.gripPoint.copy(GRIP_LOCAL).applyQuaternion(gun.quaternion)
+    // The finger bones start about 11 cm ahead of the wrist. Seat the grip there.
+    this.handWorld.addScaledVector(this.aimLocal, 0.1)
+    gun.position.copy(this.handWorld).sub(this.gripPoint)
   }
 
   dispose(): void {

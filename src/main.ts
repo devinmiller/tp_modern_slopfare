@@ -3,6 +3,7 @@ import { loadCharacterTemplate } from './character/Character'
 import { Game } from './game/Game'
 import { compound } from './maps/compound'
 import { MapPhysics } from './physics/MapPhysics'
+import { loadGlock } from './weapon/Glock'
 import { loadMap } from './world/loadMap'
 
 function requiredElement(selector: string): HTMLElement {
@@ -17,9 +18,13 @@ const fpsReadout = requiredElement('#fps')
 let game: Game | undefined
 
 async function boot(): Promise<void> {
-  const [world, character] = await Promise.all([loadMap(compound), loadCharacterTemplate()])
+  const [world, character, glock] = await Promise.all([
+    loadMap(compound),
+    loadCharacterTemplate(),
+    loadGlock(),
+  ])
   const physics = await MapPhysics.create(world.solids)
-  game = new Game(host, fpsReadout, world, physics, character)
+  game = new Game(host, fpsReadout, world, physics, character, glock)
   game.start()
   if (import.meta.env.DEV) window.__game = game
 }

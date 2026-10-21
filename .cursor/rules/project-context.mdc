@@ -1,0 +1,24 @@
+---
+description: Read and update the project handoff before changing the game
+alwaysApply: true
+---
+
+# Project handoff
+
+This repo is a browser tactical-shooter scaffold (Three.js, Vite, TypeScript). The living handoff is `docs/agent-context.md`.
+
+- Read `docs/agent-context.md` before changing architecture, simulation, or controls.
+- Update that file in the same change when you finish a milestone, change a decision, or defer a design choice.
+- Keep status in the markdown handoff, not in this rule.
+- Construct new systems from `Game` and tick them in its frame callback. Do not add a second animation loop or a module-level game singleton.
+- Sandstorm and Counter-Strike are feel references only. Do not copy their assets, maps, audio, UI, or names.
+
+Placeholder player numbers live in `src/config.ts`. They are not tuned.
+
+When you replace the scaffold walker, record the decision and remove that item from "Left to do":
+
+```markdown
+### YYYY-MM-DD — Grounded player
+
+Gravity and mesh collision live in `PlayerController`. The frame clock is still variable and clamped. A fixed step is still open.
+```

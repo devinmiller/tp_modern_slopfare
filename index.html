@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Browser Game</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23111111'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <div id="viewport"></div>
+    <div id="hud">
+      <p id="fps" aria-hidden="true">— FPS</p>
+      <div class="crosshair" aria-hidden="true"></div>
+      <p id="hint">
+        Click to look. WASD to move, Shift to run, Space to jump, C to crouch. Esc releases
+        the mouse.
+      </p>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
